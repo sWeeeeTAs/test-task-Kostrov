@@ -1,75 +1,132 @@
-# React + TypeScript + Vite
+# СтройCRM — mini-CRM для строительной компании
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Небольшая CRM: объекты строительства и задачи по ним. Две роли — **постановщик** (`tasker`) и **исполнитель** (`executor`), строгий жизненный цикл задачи и неизменяемая история статусов.
 
-Currently, two official plugins are available:
+Все правила (роли, переходы статусов, иммутабельность) проверяются **на уровне базы** — в PostgreSQL-триггерах, RPC и RLS-политиках Supabase. Интерфейс лишь подсказывает доступные действия, но обойти его нельзя: те же ограничения сработают при прямом запросе к API.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Стек
 
-## React Compiler
+- React 19 + TypeScript + Vite
+- React Router 7
+- Supabase (PostgreSQL, Auth, RLS, RPC)
+- Без UI-библиотек и state-менеджеров: собственные компоненты и небольшой слой API
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Быстрый старт
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+cp .env.example .env.local   # Windows: copy .env.example .env.local
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+В `.env.local` укажите параметры проекта Supabase (**Project Settings → API**):
 
 ```
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon public key>
+```
+
+> В клиент попадает только `anon`-ключ. `service_role` использовать во фронтенде нельзя.
+
+Затем примените схему БД: откройте **SQL Editor** в Supabase, вставьте содержимое [`Supabase/schema.sql`](Supabase/schema.sql) и выполните. Скрипт идемпотентный — его можно запускать повторно.
+
+```bash
+npm run dev
+```
+
+## Подготовка пользователей
+
+1. **Authentication → Users → Add user** — создайте пользователей (email + пароль, «Auto Confirm User» включите).
+2. Профиль создаётся автоматически триггером `handle_new_user` с ролью `executor`.
+3. Назначьте роль постановщика вручную в SQL Editor:
+
+```sql
+update public.profiles
+   set role = 'tasker'
+ where email = 'boss@company.ru';
+```
+
+Роль из `user_metadata` при регистрации намеренно не читается, а менять `role` из клиентского API запрещено, поэтому самостоятельно стать постановщиком нельзя. Самостоятельную регистрацию в проекте лучше отключить (**Authentication → Providers → Email → Disable sign up**).
+
+## Роли и возможности
+
+| Действие | Постановщик (`tasker`) | Исполнитель (`executor`) |
+| --- | --- | --- |
+| Видеть объекты | все | только те, где есть его задачи |
+| Создавать / редактировать / удалять объекты | да (удаление — если нет задач) | нет |
+| Видеть задачи | все | только назначенные ему |
+| Создавать задачи, менять название/описание/исполнителя | да | нет |
+| Менять статус | приёмка и возврат на доработку | взятие в работу и отправка на проверку |
+| Удалять задачи | только в статусе «Новая» | нет |
+| Видеть историю статусов | все | только по своим задачам |
+
+## Жизненный цикл задачи
+
+```
+Новая ──(исполнитель: взять в работу)──► В работе ──(исполнитель: отправить на проверку)──► На проверке
+  ▲                                                                                          │
+  │                                                        (постановщик: вернуть на доработку)
+  │                                                                                          ▼
+  └────────────────(исполнитель: взять в работу)──────────────────────────────────── На доработке
+
+На проверке ──(постановщик: принять)──► Принята (финальный статус)
+```
+
+- Переход «На проверке → На доработке» невозможен без комментария — он обязателен и на клиенте, и в БД.
+- Комментарий к доработке показывается баннером в карточке задачи и в истории.
+- Исполнителя можно менять только в статусах «Новая» и «На доработке»; после начала работы он зафиксирован.
+- Любой постановщик (не только автор) может принять задачу или вернуть её на доработку.
+- История статусов append-only: записи создаёт только триггер, у клиента нет прав на `insert/update/delete`.
+
+## Как правила защищены в базе
+
+| Требование | Механизм в `Supabase/schema.sql` |
+| --- | --- |
+| Профиль создаётся автоматически | триггер `on_auth_user_created` → `handle_new_user()` |
+| Нельзя выдать себе роль | нет UPDATE-политики на `profiles` + триггер `protect_profile_fields` |
+| Исполнитель не видит чужие задачи и объекты | RLS-политики `tasks_executor_select`, `objects_executor_select` |
+| Исполнитель видит только связанные профили | политика `profiles_select_related` |
+| Статус меняется только по таблице переходов | триггер `tasks_before_write` + RPC `change_task_status` |
+| Комментарий обязателен при возврате на доработку | проверка в триггере и в RPC |
+| Автора, объект и дату создания задачи изменить нельзя | триггер `tasks_before_write` |
+| Исполнитель меняется только в «Новая»/«На доработке» | триггер `tasks_before_write` |
+| Исполнителем может быть только `executor` | триггер `tasks_before_write` |
+| Смена статуса только по таблице переходов и только разрешённой ролью | триггер `tasks_before_write` — срабатывает на любой `UPDATE`, в т.ч. в обход UI |
+| Исполнитель не может менять задачу напрямую | нет UPDATE-политики на `tasks`, только RPC `change_task_status` (`security definer`, блокировка строки) |
+| История неизменяема | запись только триггером `log_task_status_change`, `prevent_history_tampering`, отозванные DML-права |
+| Нельзя удалить объект с задачами | `tasks.object_id references objects(id) on delete restrict` |
+| Удалять задачи можно только в «Новая» и только постановщику | политика `tasks_tasker_delete` |
+| Нет доступа у анонимных пользователей | `enable row level security` + `revoke ... from anon` |
+
+Комментарий к смене статуса передаётся из RPC в триггер через `set_config('app.status_comment', ...)`, поэтому подделать его отдельным запросом нельзя — прямого доступа к записи истории у клиента нет.
+
+## Структура проекта
+
+```
+Supabase/
+  schema.sql            # вся схема: таблицы, функции, триггеры, RLS (идемпотентно)
+src/
+  api/                  # тонкий слой запросов к Supabase
+  auth/                 # AuthProvider, useAuth, контекст
+  components/           # модальные окна, бейджи статусов, списки, layout
+  lib/                  # supabase-клиент, статусы и действия, форматирование, ошибки
+  pages/                # Login, Objects, Object, Task, MyTasks, NotFound
+  App.tsx               # маршруты и защита по ролям
+  main.tsx              # точка входа: Router + AuthProvider
+  index.css             # стили (без UI-библиотек)
+```
+
+## Скрипты
+
+```bash
+npm run dev      # dev-сервер Vite
+npm run build    # проверка типов (tsc -b) + production-сборка
+npm run lint     # ESLint
+npm run preview  # локальный предпросмотр сборки
+```
+
+## Проверка сценария вручную
+
+1. Войдите постановщиком → создайте объект → создайте в нём задачу и назначьте исполнителя.
+2. Войдите исполнителем → «Мои задачи» → «Взять в работу» → «Отправить на проверку».
+3. Вернитесь постановщиком → «Вернуть на доработку» с комментарием → убедитесь, что комментарий виден в карточке и истории.
+4. Попробуйте обойти интерфейс (например, `supabase.from('tasks').update({ status: 'accepted' })` из консоли): запрос будет отклонён RLS/триггером.
