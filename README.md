@@ -109,6 +109,7 @@ update public.profiles
 ## Структура проекта
 
 ```
+vercel.json             # SPA-fallback для Vercel (rewrites на index.html)
 Supabase/
   schema.sql            # вся схема: таблицы, функции, триггеры, RLS, GRANT (идемпотентно)
 docs/
@@ -140,10 +141,9 @@ npm run preview  # локальный предпросмотр сборки
 
 1. Соберите проект: `npm run build`.
 2. На хостинге задайте переменные окружения `VITE_SUPABASE_URL` и `VITE_SUPABASE_ANON_KEY` — те же, что в `.env.local`. Секретный `service_role`-ключ во фронтенд не добавляйте.
-3. Включите fallback на `index.html`, иначе прямые ссылки (`/objects/:id`, `/tasks/:id`) вернут 404:
-   - **Vercel** — файл `vercel.json`: `{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }`;
-   - **Netlify** — файл `public/_redirects` с одной строкой: `/*  /index.html  200`.
+3. Fallback на `index.html` уже настроен: для Vercel — файл `vercel.json` в корне проекта (`rewrites` всех путей на `/index.html`). Для других хостингов настройте то же самое, иначе прямые ссылки (`/objects/:id`, `/tasks/:id`) вернут 404 — например, на Netlify это файл `public/_redirects` с одной строкой `/*  /index.html  200`.
 4. В Supabase откройте **Authentication → URL Configuration** и добавьте домен приложения в `Site URL` и `Redirect URLs`.
+5. Если ссылка на Vercel открывает экран входа Vercel, а не приложение, отключите защиту: **Settings → Deployment Protection** → для Production выберите «Disabled» (по умолчанию Vercel защищает только preview-деплойменты).
 
 ## Проверка сценария вручную
 
