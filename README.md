@@ -4,6 +4,11 @@
 
 Все правила (роли, переходы статусов, иммутабельность) проверяются **на уровне базы** — в PostgreSQL-триггерах, RPC и RLS-политиках Supabase. Интерфейс лишь подсказывает доступные действия, но обойти его нельзя: те же ограничения сработают при прямом запросе к API.
 
+## Документация
+
+- [`docs/for-manager.md`](docs/for-manager.md) — объяснение для руководителя без технических терминов: как устроена система, как защищены данные и что не может сделать исполнитель.
+- [`docs/decisions.md`](docs/decisions.md) — решения и допущения там, где ТЗ не давало однозначного ответа, и что осталось за рамками.
+
 ## Стек
 
 - React 19 + TypeScript + Vite
@@ -28,6 +33,8 @@ VITE_SUPABASE_ANON_KEY=<anon public key>
 > В клиент попадает только `anon`-ключ. `service_role` использовать во фронтенде нельзя.
 
 Затем примените схему БД: откройте **SQL Editor** в Supabase, вставьте содержимое [`Supabase/schema.sql`](Supabase/schema.sql) и выполните. Скрипт идемпотентный — его можно запускать повторно.
+
+Скрипт содержит явные `GRANT`-ы для роли `authenticated` (RLS-политики сами по себе прав не выдают), поэтому запускать его нужно под ролью с правом `GRANT` — SQL Editor проекта или пользователь `postgres`. Если применить его от имени ограниченной роли, приложение получит ошибку `permission denied for table profiles`.
 
 ```bash
 npm run dev
@@ -103,7 +110,10 @@ update public.profiles
 
 ```
 Supabase/
-  schema.sql            # вся схема: таблицы, функции, триггеры, RLS (идемпотентно)
+  schema.sql            # вся схема: таблицы, функции, триггеры, RLS, GRANT (идемпотентно)
+docs/
+  for-manager.md        # объяснение для руководителя без технических деталей
+  decisions.md          # решения и допущения, что осталось за рамками
 src/
   api/                  # тонкий слой запросов к Supabase
   auth/                 # AuthProvider, useAuth, контекст
@@ -123,6 +133,17 @@ npm run build    # проверка типов (tsc -b) + production-сборк�
 npm run lint     # ESLint
 npm run preview  # локальный предпросмотр сборки
 ```
+
+## Деплой
+
+Приложение — обычная статическая сборка Vite (`npm run build` → `dist/`), поэтому подойдёт любой статический хостинг (Vercel, Netlify, свой сервер).
+
+1. Соберите проект: `npm run build`.
+2. На хостинге задайте переменные окружения `VITE_SUPABASE_URL` и `VITE_SUPABASE_ANON_KEY` — те же, что в `.env.local`. Секретный `service_role`-ключ во фронтенд не добавляйте.
+3. Включите fallback на `index.html`, иначе прямые ссылки (`/objects/:id`, `/tasks/:id`) вернут 404:
+   - **Vercel** — файл `vercel.json`: `{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }`;
+   - **Netlify** — файл `public/_redirects` с одной строкой: `/*  /index.html  200`.
+4. В Supabase откройте **Authentication → URL Configuration** и добавьте домен приложения в `Site URL` и `Redirect URLs`.
 
 ## Проверка сценария вручную
 
